@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import jax.numpy as jnp
-from e3nn_jax import Irreps, IrrepsArray
+from e3nn_jax import Irreps
 from flax import nnx
 from mace_core.modules.backends import use_backend
 from mace_core.modules.blocks import NonLinearReadoutBlock as CoreNonLinearReadoutBlock
@@ -51,5 +50,4 @@ class NonLinearReadoutBlock(CoreNonLinearReadoutBlock, nnx.Module):
             rngs=rngs,
         )
 
-    def __call__(self, x: IrrepsArray, heads: jnp.ndarray | None = None) -> IrrepsArray:
-        return self.forward(x, heads=heads)
+    __call__ = CoreNonLinearReadoutBlock.forward

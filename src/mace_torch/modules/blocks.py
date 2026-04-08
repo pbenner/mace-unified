@@ -44,5 +44,4 @@ class NonLinearReadoutBlock(CoreNonLinearReadoutBlock, torch.nn.Module):
             rngs=None,
         )
 
-    def forward(self, x: torch.Tensor, heads: torch.Tensor | None = None) -> torch.Tensor:
-        return super().forward(x, heads=heads)
+    forward = CoreNonLinearReadoutBlock.forward
