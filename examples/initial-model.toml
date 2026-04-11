@@ -1,0 +1,61 @@
+backend = "torch"
+model_class = "ScaleShiftMACE"
+seed = 0
+# output = "artifacts/init-model"
+
+[model]
+r_max = 4.5
+num_bessel = 4
+num_polynomial_cutoff = 3
+max_ell = 1
+interaction_cls = "RealAgnosticInteractionBlock"
+interaction_cls_first = "RealAgnosticInteractionBlock"
+num_interactions = 2
+hidden_irreps = "16x0e + 16x1o"
+MLP_irreps = "8x0e"
+atomic_numbers = [11, 17]
+atomic_energies = [-1.25, -2.0]
+avg_num_neighbors = 6.0
+correlation = 2
+gate = "silu"
+pair_repulsion = false
+apply_cutoff = true
+use_reduced_cg = true
+use_so3 = false
+use_agnostic_product = false
+use_last_readout_only = false
+use_embedding_readout = false
+distance_transform = "None"
+radial_type = "bessel"
+atomic_inter_scale = 1.0
+atomic_inter_shift = 0.0
+
+[model.cueq_config]
+enabled = false
+layout = "mul_ir"
+group = "O3"
+optimize_all = false
+optimize_linear = false
+optimize_channelwise = false
+optimize_symmetric = false
+optimize_fctp = false
+conv_fusion = false
+
+[torch.model]
+use_edge_irreps_first = false
+lammps_mliap = false
+
+[torch.model.oeq_config]
+enabled = false
+optimize_all = false
+optimize_channelwise = false
+conv_fusion = "atomic"
+
+[jax.model]
+replace_symmetric_contraction = false
+replacement_depth = 2
+replacement_use_species_conditioning = true
+attn_num_heads = 4
+attn_head_dim = 16
+attn_gate_mode = "scalar"
+collapse_hidden_irreps = true
