@@ -1,3 +1,10 @@
+"""Config loading helpers used by the public ``mace-model`` CLIs.
+
+The CLIs intentionally keep only a small set of operational flags.  Model
+options live in TOML or JSON config files and are normalized here into a single
+backend-specific :class:`BuildRequest`.
+"""
+
 from __future__ import annotations
 
 import json
@@ -76,6 +83,8 @@ collapse_hidden_irreps = true
 
 @dataclass(frozen=True)
 class BuildRequest:
+    """Normalized model-build request shared by the CLIs and test helpers."""
+
     backend: str
     model_class: str
     seed: int
@@ -105,6 +114,7 @@ def _normalize_backend(value: str | None) -> str:
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
+    """Load a TOML or JSON configuration file into a Python dict."""
     config_path = Path(path).expanduser().resolve()
     suffix = config_path.suffix.lower()
     if suffix == ".toml":
@@ -122,6 +132,11 @@ def load_build_request(
     backend_override: str | None = None,
     output_override: str | None = None,
 ) -> BuildRequest:
+    """Load and normalize a backend-specific model build request.
+
+    The resulting :class:`BuildRequest` merges the shared ``[model]`` section
+    with the backend-specific ``[torch.model]`` or ``[jax.model]`` overrides.
+    """
     raw = load_config(path)
     backend = _normalize_backend(backend_override or raw.get("backend"))
     model_class = str(raw.get("model_class", "MACE"))

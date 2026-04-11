@@ -1,4 +1,10 @@
-"""Shared forward-pass and reduction helpers for unified MACE models."""
+"""Shared forward-pass and reduction helpers for backend-agnostic MACE models.
+
+The helpers here implement the common control flow of the MACE energy forward
+pass while delegating primitive tensor operations to the active backend.  This
+keeps the Torch and JAX model files focused on real backend differences instead
+of duplicating the same reduction/orchestration logic.
+"""
 
 from __future__ import annotations
 

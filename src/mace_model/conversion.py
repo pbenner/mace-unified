@@ -1,3 +1,17 @@
+"""Torch checkpoint conversion helpers for ``mace_model``.
+
+This module is responsible for the user-facing conversion workflows:
+
+* load serialized local or legacy Torch checkpoints
+* normalize extracted model configs
+* convert legacy Torch MACE models into the local Torch representation
+* convert Torch models into local JAX bundles
+* save converted models in backend-specific output layouts
+
+The conversion paths intentionally keep the legacy compatibility details in one
+place so the rest of the package can operate purely on local model objects.
+"""
+
 from __future__ import annotations
 
 import json
@@ -30,6 +44,8 @@ from mace_model.torch.model_utils import (
 
 @dataclass(frozen=True)
 class TorchConversionResult:
+    """Result returned by :func:`convert_torch_model`."""
+
     backend: str
     model_class: str
     model: Any
@@ -47,6 +63,11 @@ def _extract_model_class(torch_model) -> str:
 
 
 def select_torch_model_head(torch_model, head: str | None = None):
+    """Return a single-head local Torch model view.
+
+    Head selection is only supported for local Torch models because the local
+    package controls that serialization and module surface directly.
+    """
     if head is None:
         return torch_model
     if not _looks_like_local_torch_model(torch_model):
@@ -58,6 +79,7 @@ def select_torch_model_head(torch_model, head: str | None = None):
 
 
 def extract_torch_model_config(torch_model) -> dict[str, Any]:
+    """Extract a normalized Torch model config from a model instance."""
     config = _extract_torch_model_config(torch_model)
     if "error" in config:
         raise RuntimeError(f"Failed to extract Torch model config: {config['error']}")
@@ -97,6 +119,7 @@ def _cue_config_to_dict(value: Any) -> Any:
 
 
 def normalize_extracted_torch_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a raw extracted Torch config into a JSON-safe config dict."""
     normalized = dict(config)
 
     for key in ("interaction_cls", "interaction_cls_first", "readout_cls"):
@@ -432,6 +455,15 @@ def _build_local_torch_model_from_config(
 
 
 def load_serialized_torch_model(path_arg: str | Path):
+    """Load a serialized local or legacy Torch model payload.
+
+    Supported inputs are:
+
+    * local Torch bundle directories containing ``config.json`` and
+      ``state_dict.pt``
+    * checkpoint files containing a local serialized payload
+    * legacy pickled Torch model modules
+    """
     path = Path(path_arg).expanduser().resolve()
     if path.is_dir():
         config_path = path / "config.json"
@@ -480,6 +512,22 @@ def convert_torch_model(
     device: str = "cpu",
     config: dict[str, Any] | None = None,
 ) -> TorchConversionResult:
+    """Convert a Torch model into the local Torch or JAX representation.
+
+    Parameters
+    ----------
+    torch_model:
+        Source Torch model, either already local or a legacy upstream model.
+    backend:
+        Conversion target, ``"torch"`` or ``"jax"``.
+    head:
+        Optional head name to keep when converting a multi-head local model.
+    device:
+        Device hint used for temporary Torch-side conversion helpers.
+    config:
+        Optional pre-extracted model config.  When omitted, the config is
+        extracted from ``torch_model``.
+    """
     backend = str(backend).strip().lower()
     if backend not in {"torch", "jax"}:
         raise ValueError(f"Unsupported backend {backend!r}; expected 'torch' or 'jax'.")
@@ -564,6 +612,7 @@ def save_converted_model(
     result: TorchConversionResult,
     output: str | Path,
 ) -> list[Path]:
+    """Save a converted model using the backend-specific bundle layout."""
     if result.backend == "torch":
         config_path, params_path = _resolve_torch_output(output)
         if config_path is None:

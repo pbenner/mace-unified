@@ -1,4 +1,10 @@
-"""Shared stack-construction helpers for unified MACE models."""
+"""Shared stack-construction helpers for backend-agnostic MACE models.
+
+This module contains the backend-independent assembly logic for the interaction,
+product, and readout stacks used by the local Torch and JAX models.  Backend
+files provide concrete block classes; this module wires them together into the
+standard MACE energy stack.
+"""
 
 from __future__ import annotations
 

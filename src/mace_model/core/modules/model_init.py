@@ -1,4 +1,10 @@
-"""Shared constructor and layout helpers for unified MACE models."""
+"""Shared constructor and layout helpers for backend-agnostic MACE models.
+
+The logic in this module deals with the large amount of bookkeeping that is
+common to both the local Torch and JAX model implementations: attribute
+normalization, irreps-layout construction, optional embedding configuration,
+and readout/output metadata setup.
+"""
 
 from __future__ import annotations
 

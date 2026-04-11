@@ -1,3 +1,14 @@
+"""Public helpers for constructing and saving initial ``mace_model`` models.
+
+This module is the small orchestration layer used by the config-driven CLI and
+by tests.  It keeps backend-specific details out of the CLI entrypoints by:
+
+* normalizing model-class names and config payloads
+* instantiating either the local Torch or JAX model implementation
+* converting config objects to JSON-safe summaries for serialization
+* saving initialized model weights in the backend-specific bundle layout
+"""
+
 from __future__ import annotations
 
 import inspect
@@ -89,6 +100,19 @@ TORCH_MODEL_CLASSES = {"MACE": TorchMACE, "ScaleShiftMACE": TorchScaleShiftMACE}
 
 @dataclass(frozen=True)
 class BuildResult:
+    """Result returned by :func:`build_initial_model`.
+
+    Attributes
+    ----------
+    request:
+        Fully normalized build request used to instantiate the model.
+    model:
+        Backend-specific model instance.  This is either a local Torch module or
+        a local JAX/NNX model.
+    normalized_model_config:
+        JSON-serializable version of the effective model configuration.
+    """
+
     request: BuildRequest
     model: Any
     normalized_model_config: dict[str, Any]
@@ -224,6 +248,7 @@ def _torch_kwargs_from_config(
     model_class: str,
     config: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Translate a normalized model config into Torch constructor kwargs."""
     model_cls = _normalize_model_class("torch", model_class)
     signature = inspect.signature(model_cls.__init__)
     allowed = set(signature.parameters) - {"self", "kwargs"}
@@ -280,6 +305,7 @@ def _torch_kwargs_from_config(
 def _jax_config_from_request(
     model_class: str, config: dict[str, Any]
 ) -> dict[str, Any]:
+    """Normalize a build request into the config expected by the JAX builder."""
     normalized = dict(config)
     if model_class != "MACE":
         normalized["torch_model_class"] = model_class
@@ -308,6 +334,12 @@ def _parameter_count(backend: str, model: Any) -> int:
 
 
 def build_initial_model(request: BuildRequest) -> BuildResult:
+    """Instantiate a new local Torch or JAX model from a build request.
+
+    The returned :class:`BuildResult` contains both the model object and a
+    JSON-safe representation of the effective model configuration, which makes
+    it suitable for later serialization with :func:`save_initialized_model`.
+    """
     if request.backend == "torch":
         torch.manual_seed(request.seed)
         kwargs, normalized = _torch_kwargs_from_config(
@@ -333,6 +365,7 @@ def build_initial_model(request: BuildRequest) -> BuildResult:
 
 
 def summarize_build(result: BuildResult) -> dict[str, Any]:
+    """Return a compact human-readable summary of a completed build."""
     return {
         "backend": result.request.backend,
         "model_class": result.request.model_class,
@@ -366,6 +399,12 @@ def _resolve_jax_output(path_arg: str | Path) -> tuple[Path, Path]:
 
 
 def save_initialized_model(result: BuildResult, output: str | Path) -> list[Path]:
+    """Persist an initialized model in the backend-specific bundle format.
+
+    Torch outputs are stored either as a directory containing ``config.json``
+    plus ``state_dict.pt`` or as a single checkpoint payload.  JAX outputs are
+    stored as ``config.json`` plus ``params.msgpack``.
+    """
     if result.request.backend == "torch":
         config_path, params_path = _resolve_torch_output(output)
         if config_path is None:
