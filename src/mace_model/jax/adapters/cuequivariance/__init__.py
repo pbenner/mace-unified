@@ -10,13 +10,6 @@ from flax import nnx
 
 from mace_model.jax.adapters.e3nn import Irreps
 
-from .fully_connected_tensor_product import (
-    FullyConnectedTensorProduct as _CueFullyConnectedTensorProduct,
-)
-from .linear import Linear as _CueLinear
-from .symmetric_contraction import SymmetricContraction as _CueSymmetricContraction
-from .tensor_product import TensorProduct as _CueTensorProduct
-
 _SUPPORTED_CUE_GROUPS = {"O3", "O3_e3nn"}
 
 
@@ -119,6 +112,8 @@ class Linear:
         if group is not None:
             linear_kwargs["group"] = group
 
+        from .linear import Linear as _CueLinear  # noqa: PLC0415
+
         return _CueLinear(
             irreps_in,
             irreps_out,
@@ -157,6 +152,8 @@ class TensorProduct:
             tp_kwargs["layout"] = getattr(cueq_config, "layout")
         if group is not None:
             tp_kwargs["group"] = group
+
+        from .tensor_product import TensorProduct as _CueTensorProduct  # noqa: PLC0415
 
         return _CueTensorProduct(
             irreps_in1,
@@ -198,6 +195,10 @@ def FullyConnectedTensorProduct(
         fctp_kwargs["layout"] = getattr(cueq_config, "layout")
     if group is not None:
         fctp_kwargs["group"] = group
+
+    from .fully_connected_tensor_product import (  # noqa: PLC0415
+        FullyConnectedTensorProduct as _CueFullyConnectedTensorProduct,
+    )
 
     return _CueFullyConnectedTensorProduct(
         irreps_in1,
@@ -247,6 +248,10 @@ def SymmetricContractionWrapper(
     )
     if group is not None:
         sc_kwargs["group"] = group
+
+    from .symmetric_contraction import (  # noqa: PLC0415
+        SymmetricContraction as _CueSymmetricContraction,
+    )
 
     return _CueSymmetricContraction(
         irreps_in=irreps_in,

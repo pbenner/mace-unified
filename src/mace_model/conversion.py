@@ -196,7 +196,10 @@ def _torch_target_basis_kind(target_product) -> str | None:
     use_reduced_cg = getattr(target_product, "use_reduced_cg", None)
     if use_reduced_cg is None:
         return None
-    return "reduced" if bool(use_reduced_cg) else "native_full"
+    # Local cue-backed Torch modules use the same canonical full-CG ordering as
+    # the JAX path. Full-CG legacy imports therefore need the native->canonical
+    # change of basis instead of a raw full-basis copy.
+    return "reduced" if bool(use_reduced_cg) else "canonical_full"
 
 
 def _transfer_upstream_symmetric_contractions(

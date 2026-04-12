@@ -64,16 +64,9 @@ def _make_legacy_model_and_batch(*, use_reduced_cg: bool = True):
     return model, batch
 
 
-def _make_legacy_water_batch(
-    dtype: torch.dtype,
-    *,
-    atomic_numbers_table: list[int] | tuple[int, ...] | None = None,
-):
-    _o3, data, _modules, tools, torch_geometric = _require_legacy_mace()
-    previous_dtype = torch.get_default_dtype()
-    torch.set_default_dtype(dtype)
-    try:
-        config = data.Configuration(
+def _legacy_water_configurations(data_module):
+    return [
+        data_module.Configuration(
             atomic_numbers=np.array([8, 1, 1]),
             positions=np.array(
                 [
@@ -91,11 +84,47 @@ def _make_legacy_water_batch(
                 "energy": 1.0,
             },
             weight=1.0,
-        )
+        ),
+        data_module.Configuration(
+            atomic_numbers=np.array([8, 1, 1]),
+            positions=np.array(
+                [
+                    [0.1, -2.2, 0.1],
+                    [1.1, 0.2, -0.1],
+                    [-0.2, 0.9, 0.3],
+                ]
+            ),
+            properties={
+                "forces": np.zeros((3, 3)),
+                "energy": -1.25,
+            },
+            property_weights={
+                "forces": 1.0,
+                "energy": 1.0,
+            },
+            weight=1.0,
+        ),
+    ]
+
+
+def _make_legacy_batch_from_config(
+    config,
+    dtype: torch.dtype,
+    *,
+    atomic_numbers_table: list[int] | tuple[int, ...] | None = None,
+):
+    _o3, data, _modules, tools, torch_geometric = _require_legacy_mace()
+    previous_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    try:
         if atomic_numbers_table is None:
             atomic_numbers_table = [1, 8]
         table = tools.AtomicNumberTable(list(atomic_numbers_table))
-        atomic_data = data.AtomicData.from_config(config, z_table=table, cutoff=3.0)
+        atomic_data = data.AtomicData.from_config(
+            config,
+            z_table=table,
+            cutoff=3.0,
+        )
         return next(
             iter(
                 torch_geometric.dataloader.DataLoader(
@@ -110,25 +139,119 @@ def _make_legacy_water_batch(
         torch.set_default_dtype(previous_dtype)
 
 
+def _make_legacy_water_batch(
+    dtype: torch.dtype,
+    *,
+    atomic_numbers_table: list[int] | tuple[int, ...] | None = None,
+):
+    _o3, data, _modules, _tools, _torch_geometric = _require_legacy_mace()
+    config = _legacy_water_configurations(data)[0]
+    return _make_legacy_batch_from_config(
+        config,
+        dtype,
+        atomic_numbers_table=atomic_numbers_table,
+    )
+
+
+def _make_legacy_water_batches(
+    dtype: torch.dtype,
+    *,
+    atomic_numbers_table: list[int] | tuple[int, ...] | None = None,
+):
+    _o3, data, _modules, _tools, _torch_geometric = _require_legacy_mace()
+    return [
+        _make_legacy_batch_from_config(
+            config,
+            dtype,
+            atomic_numbers_table=atomic_numbers_table,
+        )
+        for config in _legacy_water_configurations(data)
+    ]
+
+
+def _assert_outputs_close(
+    legacy_out,
+    local_out,
+    *,
+    energy_tol: float,
+    force_tol: float,
+    stress_tol: float,
+):
+    for key in ("energy", "node_energy", "interaction_energy"):
+        assert torch.allclose(
+            legacy_out[key],
+            local_out[key],
+            atol=energy_tol,
+            rtol=energy_tol,
+        ), key
+    for key in ("forces",):
+        assert torch.allclose(
+            legacy_out[key],
+            local_out[key],
+            atol=force_tol,
+            rtol=force_tol,
+        ), key
+    for key in ("stress",):
+        assert torch.allclose(
+            legacy_out[key],
+            local_out[key],
+            atol=stress_tol,
+            rtol=stress_tol,
+        ), key
+
+
 def test_convert_legacy_torch_model_preserves_energy_outputs():
     legacy_model, batch = _make_legacy_model_and_batch()
     local_model = convert_torch_model(legacy_model, backend="torch").model.eval()
+    batches = [batch, *_make_legacy_water_batches(torch.float64)[1:]]
 
-    legacy_out = legacy_model(batch.to_dict(), training=False)
-    local_out = local_model(batch.to_dict(), training=False)
+    for item in batches:
+        legacy_out = legacy_model(
+            item.to_dict(),
+            training=False,
+            compute_force=True,
+            compute_stress=True,
+        )
+        local_out = local_model(
+            item.to_dict(),
+            training=False,
+            compute_force=True,
+            compute_stress=True,
+        )
+        _assert_outputs_close(
+            legacy_out,
+            local_out,
+            energy_tol=1e-8,
+            force_tol=1e-8,
+            stress_tol=1e-10,
+        )
 
-    assert torch.allclose(
-        legacy_out["energy"],
-        local_out["energy"],
-        atol=1e-5,
-        rtol=1e-5,
-    )
-    assert torch.allclose(
-        legacy_out["node_energy"],
-        local_out["node_energy"],
-        atol=1e-5,
-        rtol=1e-5,
-    )
+
+def test_convert_legacy_torch_model_full_cg_preserves_energy_outputs():
+    legacy_model, batch = _make_legacy_model_and_batch(use_reduced_cg=False)
+    local_model = convert_torch_model(legacy_model, backend="torch").model.eval()
+    batches = [batch, *_make_legacy_water_batches(torch.float64)[1:]]
+
+    for item in batches:
+        legacy_out = legacy_model(
+            item.to_dict(),
+            training=False,
+            compute_force=True,
+            compute_stress=True,
+        )
+        local_out = local_model(
+            item.to_dict(),
+            training=False,
+            compute_force=True,
+            compute_stress=True,
+        )
+        _assert_outputs_close(
+            legacy_out,
+            local_out,
+            energy_tol=1e-6,
+            force_tol=1e-6,
+            stress_tol=1e-8,
+        )
 
 
 def test_load_serialized_legacy_checkpoint_and_convert(tmp_path: Path):
@@ -138,16 +261,28 @@ def test_load_serialized_legacy_checkpoint_and_convert(tmp_path: Path):
 
     loaded_model, _normalized = load_serialized_torch_model(checkpoint_path)
     local_model = convert_torch_model(loaded_model, backend="torch").model.eval()
+    batches = [batch, *_make_legacy_water_batches(torch.float64)[1:]]
 
-    legacy_out = legacy_model(batch.to_dict(), training=False)
-    local_out = local_model(batch.to_dict(), training=False)
-
-    assert torch.allclose(
-        legacy_out["energy"],
-        local_out["energy"],
-        atol=1e-5,
-        rtol=1e-5,
-    )
+    for item in batches:
+        legacy_out = legacy_model(
+            item.to_dict(),
+            training=False,
+            compute_force=True,
+            compute_stress=True,
+        )
+        local_out = local_model(
+            item.to_dict(),
+            training=False,
+            compute_force=True,
+            compute_stress=True,
+        )
+        _assert_outputs_close(
+            legacy_out,
+            local_out,
+            energy_tol=1e-8,
+            force_tol=1e-8,
+            stress_tol=1e-10,
+        )
 
 
 def test_convert_real_foundation_checkpoint_preserves_energy_outputs():
@@ -172,18 +307,29 @@ def test_convert_real_foundation_checkpoint_preserves_energy_outputs():
         batch_dtype = next(legacy_model.parameters()).dtype
     except StopIteration:
         batch_dtype = torch.get_default_dtype()
-    batch = _make_legacy_water_batch(
+    batches = _make_legacy_water_batches(
         batch_dtype,
         atomic_numbers_table=getattr(legacy_model, "atomic_numbers", None),
     )
     local_model = convert_torch_model(legacy_model, backend="torch").model.eval()
 
-    legacy_out = legacy_model(batch.to_dict(), training=False)
-    local_out = local_model(batch.to_dict(), training=False)
-
-    assert torch.allclose(
-        legacy_out["energy"],
-        local_out["energy"],
-        atol=2e-2,
-        rtol=2e-2,
-    )
+    for batch in batches:
+        legacy_out = legacy_model(
+            batch.to_dict(),
+            training=False,
+            compute_force=True,
+            compute_stress=True,
+        )
+        local_out = local_model(
+            batch.to_dict(),
+            training=False,
+            compute_force=True,
+            compute_stress=True,
+        )
+        _assert_outputs_close(
+            legacy_out,
+            local_out,
+            energy_tol=1e-5,
+            force_tol=1e-5,
+            stress_tol=1e-8,
+        )
