@@ -34,7 +34,7 @@ def _make_zero_irrep(make_irreps: Callable[[Any], Any]) -> Any:
     return zero_irrep
 
 
-def _build_gated_irreps(
+def build_gated_irreps(
     *,
     make_irreps: Callable[[Any], Any],
     hidden_irreps: Any,
@@ -56,7 +56,7 @@ def _build_gated_irreps(
     return irreps_scalars, irreps_gates, irreps_gated
 
 
-def _tp_out_irreps_with_instructions(
+def tp_out_irreps_with_instructions(
     *,
     make_irreps: Callable[[Any], Any],
     irreps1: Any,
@@ -144,7 +144,7 @@ def _reshape_irreps_tensor(
     return concat_fields(fields, cat_axis)
 
 
-class _CachedIrrepsReshaper:
+class CachedIrrepsReshaper:
     """Cache irreps layout metadata and apply the corresponding reshape."""
 
     def __init__(

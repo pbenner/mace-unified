@@ -7,8 +7,8 @@ import numpy as np
 from flax import nnx
 from mace_model.core.modules.backends import define_backend
 from mace_model.core.modules.irreps_utils import (
-    _CachedIrrepsReshaper,
-    _tp_out_irreps_with_instructions,
+    CachedIrrepsReshaper,
+    tp_out_irreps_with_instructions,
 )
 
 from mace_model.jax.adapters.e3nn import nn
@@ -94,7 +94,7 @@ def _tp_out_irreps_with_instructions_jax(
     irreps2: Irreps,
     target_irreps: Irreps,
 ) -> tuple[Irreps, list]:
-    return _tp_out_irreps_with_instructions(
+    return tp_out_irreps_with_instructions(
         make_irreps=Irreps,
         irreps1=irreps1,
         irreps2=irreps2,
@@ -104,7 +104,7 @@ def _tp_out_irreps_with_instructions_jax(
 
 class _ReshapeIrreps:
     def __init__(self, irreps: Irreps, cueq_config: object | None = None):
-        self._reshaper = _CachedIrrepsReshaper(
+        self._reshaper = CachedIrrepsReshaper(
             make_irreps=Irreps,
             irreps=irreps,
             cueq_config=cueq_config,

@@ -11,8 +11,8 @@ from mace_model.torch.adapters.cuequivariance import (
 )
 from mace_model.core.modules.backends import define_backend
 from mace_model.core.modules.irreps_utils import (
-    _CachedIrrepsReshaper,
-    _tp_out_irreps_with_instructions,
+    CachedIrrepsReshaper,
+    tp_out_irreps_with_instructions,
 )
 from mace_model.torch.adapters.e3nn import nn, o3
 
@@ -35,7 +35,7 @@ def _tp_out_irreps_with_instructions_torch(
     irreps2: o3.Irreps,
     target_irreps: o3.Irreps,
 ) -> tuple[o3.Irreps, list[tuple[int, int, int, str, bool]]]:
-    return _tp_out_irreps_with_instructions(
+    return tp_out_irreps_with_instructions(
         make_irreps=o3.Irreps,
         irreps1=irreps1,
         irreps2=irreps2,
@@ -46,7 +46,7 @@ def _tp_out_irreps_with_instructions_torch(
 class _ReshapeIrreps(torch.nn.Module):
     def __init__(self, irreps: o3.Irreps, cueq_config: object | None = None) -> None:
         super().__init__()
-        self._reshaper = _CachedIrrepsReshaper(
+        self._reshaper = CachedIrrepsReshaper(
             make_irreps=o3.Irreps,
             irreps=irreps,
             cueq_config=cueq_config,

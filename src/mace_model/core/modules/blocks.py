@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from .backends import ModelBackend, _require_backend
-from .irreps_utils import _build_gated_irreps
+from .irreps_utils import build_gated_irreps
 
 
 class LinearNodeEmbeddingBlock:
@@ -295,7 +295,7 @@ class NonLinearDipoleReadoutBlock:
         else:
             self.irreps_out = make_irreps("1x0e + 1x1o")
 
-        irreps_scalars, irreps_gates, irreps_gated = _build_gated_irreps(
+        irreps_scalars, irreps_gates, irreps_gated = build_gated_irreps(
             make_irreps=make_irreps,
             hidden_irreps=self.hidden_irreps,
             irreps_out=self.irreps_out,
@@ -401,7 +401,7 @@ class NonLinearDipolePolarReadoutBlock:
             )
         self.irreps_out = make_irreps("2x0e + 1x1o + 1x2e")
 
-        irreps_scalars, irreps_gates, irreps_gated = _build_gated_irreps(
+        irreps_scalars, irreps_gates, irreps_gated = build_gated_irreps(
             make_irreps=make_irreps,
             hidden_irreps=self.hidden_irreps,
             irreps_out=self.irreps_out,
