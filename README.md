@@ -1,11 +1,19 @@
 # mace-model
 
-`mace-model` hosts the MACE model implementations for this workspace.
+`mace-model` is a repository that contains only the MACE model code derived
+from the upstream Torch and JAX projects:
+
+- [`ACEsuit/mace`](https://github.com/ACEsuit/mace)
+- [`ACEsuit/mace-jax`](https://github.com/ACEsuit/mace-jax)
+
+Its purpose is to keep both the Torch and JAX MACE implementations in one
+repository, minimize code overlap between them, and deliberately exclude
+training, data handling, and training workflow code.
 
 Companion repository:
 
 - [`equitrain`](https://github.com/bamescience/equitrain): preprocessing,
-  training, fine-tuning, and experiment orchestration
+  training, fine-tuning, and run management
 
 It provides:
 
@@ -18,14 +26,14 @@ It installs as a single Python package namespace, `mace_model`. The backend
 implementations and shared code live below that namespace instead of being
 installed as separate top-level packages.
 
-It does not provide the training stack. Data handling, training loops, checkpoint
-management, and experiment orchestration belong in `equitrain`.
+It does not provide the training stack. Data handling, preprocessing, training
+loops, checkpoint management, and run management belong in `equitrain`.
 
 The intended workflow is:
 
 1. use `mace-model` to initialize, convert, or download a MACE model artifact
 2. use [`equitrain`](https://github.com/bamescience/equitrain) to preprocess
-   data, train, fine-tune, and manage experiments
+   data, train, fine-tune, and manage training runs
 
 ## Purpose
 
@@ -100,7 +108,7 @@ Useful commands:
 mace-model-init --print-example-config
 mace-model-init --config examples/initial-model.toml
 mace-model-init --config examples/initial-model.toml --backend jax
-mace-model-init --config examples/initial-model.toml --output artifacts/init-model
+mace-model-init --config examples/initial-model.toml --output models/init-model
 ```
 
 If you prefer not to rely on the installed script, the same entry point can be
@@ -116,7 +124,7 @@ Use `mace-model-convert` when you already have a Torch model and want a local
 JAX bundle:
 
 ```bash
-mace-model-convert path/to/model.pt --output artifacts/model-jax
+mace-model-convert path/to/model.pt --output models/model-jax
 ```
 
 Accepted inputs:
@@ -135,8 +143,8 @@ Main arguments:
 Examples:
 
 ```bash
-mace-model-convert foundation.pt --output artifacts/foundation-jax
-mace-model-convert artifacts/local-torch-model --output artifacts/local-torch-model-jax
+mace-model-convert foundation.pt --output models/foundation-jax
+mace-model-convert models/local-torch-model --output models/local-torch-model-jax
 ```
 
 The output is a standard local JAX bundle:
@@ -174,7 +182,7 @@ Examples:
 
 ```bash
 mace-model-foundation --backend torch --source mp --model medium-mpa-0
-mace-model-foundation --backend jax --source off --model small --output artifacts/off-small-jax
+mace-model-foundation --backend jax --source off --model small --output models/off-small-jax
 mace-model-foundation --backend torch --source mp --model medium-mpa-0 --head Default
 ```
 
@@ -324,45 +332,23 @@ The compile/export helpers are inference-oriented:
 - they request only the observables implied by `output_keys`
 - they currently target the standard non-LAMMPS graph path
 
-## Relationship To equitrain
+## Relationship to Equitrain
 
-The intended split in this workspace is:
+The intended split is:
 
 - [`mace-model`](https://github.com/bamescience/mace-model): model definitions,
   backend adapters, model serialization helpers, conversion, and foundation
   export
 - [`equitrain`](https://github.com/bamescience/equitrain): data pipelines,
-  training loops, checkpoints, and experiment execution
-
-So if a change affects model architecture or model semantics, it should usually
-live here.
-
-If a change affects training, batching, datasets, or orchestration, it should
-usually live in `equitrain`.
+  training loops, checkpoints, and run management
 
 ## Development
 
-Run the local test suite with:
+Run the test suite with:
 
 ```bash
-/home/pbenner/Env/mace-jax/.venv/bin/python -m pytest -q tests
+python -m pytest -q tests
 ```
 
-The suite focuses on:
-
-- Torch/JAX parity
-- backend adapter behavior
-- model initialization and serialization
-- regression coverage for the shared model core
-
-As of April 11, 2026, the full local suite in this environment reports:
-
-```text
-13 passed, 10 skipped
-```
-
-The skipped tests are:
-
-- the JAX/cue native-op dependent tests on this machine
-- the opt-in real-foundation parity test, which only runs when
-  `MACE_MODEL_RUN_FOUNDATION_PARITY=1` is set
+The real foundation-model parity test is opt-in and only runs when
+`MACE_MODEL_RUN_FOUNDATION_PARITY=1` is set.
