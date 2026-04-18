@@ -7,7 +7,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from ase.build import molecule
 from mace_model.conversion import convert_torch_model, load_serialized_torch_model
+from mace_model.foundation import download_foundation_model
 from torch.serialization import add_safe_globals
 
 add_safe_globals([slice])
@@ -166,6 +168,86 @@ def _make_legacy_water_batches(
             atomic_numbers_table=atomic_numbers_table,
         )
         for config in _legacy_water_configurations(data)
+    ]
+
+
+def _legacy_off_test_configurations(data_module):
+    configs = []
+    for i, name in enumerate(("H2O", "CH4", "NH3", "CH3OH")):
+        atoms = molecule(name)
+        positions = np.asarray(atoms.positions, dtype=float)
+        if i:
+            positions = positions + 0.02 * i
+        configs.append(
+            {
+                "config": data_module.Configuration(
+                    atomic_numbers=np.asarray(atoms.numbers, dtype=int),
+                    positions=positions,
+                    properties={
+                        "forces": np.zeros_like(positions),
+                        "energy": float(-(i + 1)),
+                    },
+                    property_weights={
+                        "forces": 1.0,
+                        "energy": 1.0,
+                    },
+                    weight=1.0,
+                ),
+                "compare_stress": False,
+            }
+        )
+
+    periodic_atoms = molecule("CH3OH")
+    periodic_positions = np.asarray(periodic_atoms.positions, dtype=float)
+    periodic_positions[:, 0] += 0.15
+    periodic_positions[:, 1] -= 0.08
+    periodic_cell = np.array(
+        [
+            [8.0, 0.2, 0.0],
+            [0.0, 7.6, 0.1],
+            [0.0, 0.0, 8.4],
+        ],
+        dtype=float,
+    )
+    configs.append(
+        {
+            "config": data_module.Configuration(
+                atomic_numbers=np.asarray(periodic_atoms.numbers, dtype=int),
+                positions=periodic_positions,
+                properties={
+                    "forces": np.zeros_like(periodic_positions),
+                    "energy": -5.0,
+                },
+                property_weights={
+                    "forces": 1.0,
+                    "energy": 1.0,
+                },
+                cell=periodic_cell,
+                pbc=(True, True, True),
+                weight=1.0,
+            ),
+            "compare_stress": True,
+        }
+    )
+    return configs
+
+
+def _make_legacy_off_batches(
+    dtype: torch.dtype,
+    *,
+    atomic_numbers_table: list[int] | tuple[int, ...] | None = None,
+):
+    _o3, data, _modules, _tools, _torch_geometric = _require_legacy_mace()
+    return [
+        {
+            "batch": _make_legacy_batch_from_config(
+                item["config"],
+                dtype,
+                atomic_numbers_table=atomic_numbers_table,
+            ),
+            "compare_stress": bool(item["compare_stress"]),
+        }
+        for item in _legacy_off_test_configurations(data)
     ]
 
 
@@ -333,3 +415,86 @@ def test_convert_real_foundation_checkpoint_preserves_energy_outputs():
             force_tol=1e-5,
             stress_tol=1e-8,
         )
+
+
+def test_off_foundation_model_energy_force_parity():
+    if os.environ.get("MACE_MODEL_RUN_OFF_PARITY", "0").lower() not in {
+        "1",
+        "true",
+        "yes",
+    }:
+        pytest.skip(
+            "Set MACE_MODEL_RUN_OFF_PARITY=1 to run the heavy OFF foundation parity test."
+        )
+
+    _o3, _data, _modules, _tools, _torch_geometric = _require_legacy_mace()
+    from mace.calculators import mace_off as legacy_mace_off  # noqa: PLC0415
+
+    try:
+        legacy_model = legacy_mace_off(
+            model="medium",
+            device="cpu",
+            default_dtype="float64",
+            return_raw_model=True,
+        ).eval()
+    except Exception as exc:  # pragma: no cover - environment dependent
+        pytest.skip(f"Unable to load legacy MACE-OFF model: {exc}")
+
+    try:
+        local_model = download_foundation_model(
+            backend="torch",
+            source="off",
+            model="medium",
+            device="cpu",
+            default_dtype="float64",
+        ).model.eval()
+    except Exception as exc:  # pragma: no cover - environment dependent
+        pytest.skip(f"Unable to load local MACE-OFF model: {exc}")
+
+    try:
+        batch_dtype = next(legacy_model.parameters()).dtype
+    except StopIteration:
+        batch_dtype = torch.get_default_dtype()
+
+    batches = _make_legacy_off_batches(
+        batch_dtype,
+        atomic_numbers_table=getattr(legacy_model, "atomic_numbers", None),
+    )
+
+    for item in batches:
+        batch = item["batch"]
+        compare_stress = bool(item["compare_stress"])
+        legacy_out = legacy_model(
+            batch.to_dict(),
+            training=False,
+            compute_force=True,
+            compute_stress=compare_stress,
+        )
+        local_out = local_model(
+            batch.to_dict(),
+            training=False,
+            compute_force=True,
+            compute_stress=compare_stress,
+        )
+
+        assert torch.allclose(
+            legacy_out["energy"],
+            local_out["energy"],
+            atol=1e-5,
+            rtol=1e-5,
+        )
+        assert torch.allclose(
+            legacy_out["forces"],
+            local_out["forces"],
+            atol=1e-5,
+            rtol=1e-5,
+        )
+        if compare_stress:
+            assert "stress" in legacy_out
+            assert "stress" in local_out
+            assert torch.allclose(
+                legacy_out["stress"],
+                local_out["stress"],
+                atol=1e-5,
+                rtol=1e-5,
+            )

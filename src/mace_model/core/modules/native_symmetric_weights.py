@@ -292,6 +292,75 @@ def assign_native_basis(
         raise ValueError("Basis vector length mismatch while scattering weights.")
 
 
+def _manual_contraction_forward(contraction, x, attrs):
+    """Evaluate one native MACE Contraction using its serialized graph modules.
+
+    Legacy checkpoint stubs may deserialize without an executable ``forward``
+    method. In that case, we reproduce the exact MACE Contraction forward pass
+    from the stored ``graph_opt_main`` / ``contractions_*`` modules and
+    ``U_matrix_*`` buffers.
+    """
+    correlation = int(contraction.correlation)
+    out = contraction.graph_opt_main(
+        getattr(contraction, f"U_matrix_{correlation}"),
+        contraction.weights_max,
+        x,
+        attrs,
+    )
+    for idx, (weight, contract_weights, contract_features) in enumerate(
+        zip(
+            contraction.weights,
+            contraction.contractions_weighting,
+            contraction.contractions_features,
+        )
+    ):
+        degree = correlation - idx - 1
+        c_tensor = contract_weights(
+            getattr(contraction, f"U_matrix_{degree}"),
+            weight,
+            attrs,
+        )
+        c_tensor = c_tensor + out
+        out = contract_features(c_tensor, x)
+    return out.view(out.shape[0], -1)
+
+
+def _manual_native_forward(torch_module, x, attrs):
+    """Evaluate a native symmetric-contraction module without using .forward()."""
+    import torch  # noqa: PLC0415
+
+    if not hasattr(torch_module, "contractions"):
+        raise AttributeError(
+            "Serialized native symmetric-contraction module has no 'contractions'."
+        )
+    outs = [
+        _manual_contraction_forward(contraction, x, attrs)
+        for contraction in torch_module.contractions
+    ]
+    return torch.cat(outs, dim=-1)
+
+
+def _native_forward_with_mode(torch_module, x, attrs, mode: str | None):
+    """Evaluate native module and return chosen execution mode.
+
+    Modes:
+    - ``'direct'``: call ``torch_module.forward``.
+    - ``'manual'``: execute the serialized MACE contraction graphs directly.
+    - ``None``: auto-detect and cache the chosen mode.
+    """
+    if mode == "manual":
+        return _manual_native_forward(torch_module, x, attrs), "manual"
+    if mode == "direct":
+        return torch_module(x, attrs), "direct"
+
+    try:
+        return torch_module(x, attrs), "direct"
+    except (NotImplementedError, AttributeError):
+        # Legacy checkpoint stubs intentionally raise here. We then run the
+        # serialized contraction graphs directly.
+        return _manual_native_forward(torch_module, x, attrs), "manual"
+
+
 def native_design_matrix(
     torch_module,
     *,
@@ -310,6 +379,7 @@ def native_design_matrix(
     if probe_indices is None:
         probe_indices = _probe_element_indices(num_elements)
     outputs: list[np.ndarray] = []
+    forward_mode: str | None = None
     for idx in range(basis_dim):
         per_element_outputs: list[np.ndarray] = []
         for element_index in probe_indices:
@@ -324,7 +394,13 @@ def native_design_matrix(
             torch_attrs = torch.zeros((inputs_np.shape[0], num_elements), dtype=dtype)
             torch_attrs[:, element_index] = 1.0
             with torch.no_grad():
-                out = torch_module(torch_inputs, torch_attrs).detach().cpu().numpy()
+                out_tensor, forward_mode = _native_forward_with_mode(
+                    torch_module,
+                    torch_inputs,
+                    torch_attrs,
+                    mode=forward_mode,
+                )
+                out = out_tensor.detach().cpu().numpy()
             per_element_outputs.append(np.asarray(out).reshape(-1))
         outputs.append(np.concatenate(per_element_outputs, axis=0))
 

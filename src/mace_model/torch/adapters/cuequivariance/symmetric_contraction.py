@@ -102,13 +102,14 @@ def _native_full_cg_context(
 ):
     native_dtype = native_module.contractions[0].weights_max.dtype
     cue_irreps_in = cue.Irreps(cue.O3, irreps_in_str)
+    num_elements = int(native_module.contractions[0].weights_max.shape[0])
     mul = int(cue_irreps_in[0].mul)
     feature_dim = int(sum(term.ir.dim for term in cue_irreps_in))
     native_dim = gather_native_reduced_weights(
         native_module,
         correlation=correlation,
         mul_dim=mul,
-        num_elements=1,
+        num_elements=num_elements,
     ).shape[1]
     solve_dtype = np.float64 if native_dtype == torch.float64 else np.float32
     return native_dtype, solve_dtype, mul, feature_dim, native_dim
@@ -134,6 +135,61 @@ def _solve_native_to_canonical_transform(
     ).astype(solve_dtype, copy=False)
     transform = np.linalg.lstsq(canonical_matrix, native_matrix, rcond=1e-12)[0]
     return transform.astype(np.float64)
+
+
+_NATIVE_INSTANCE_TRANSFORM_CACHE: dict[tuple[str, str, int, int, str], np.ndarray] = {}
+
+
+def _full_cg_transform_from_native_instance(native_module) -> np.ndarray:
+    """Compute exact native->canonical full-CG transform from a module instance."""
+    irreps_in = cue.Irreps(cue.O3, str(native_module.irreps_in))
+    irreps_out = cue.Irreps(cue.O3, str(native_module.irreps_out))
+    correlation = int(native_module.contractions[0].correlation)
+    native_dtype, solve_dtype, mul, feature_dim, native_dim = _native_full_cg_context(
+        native_module,
+        str(irreps_in),
+        correlation,
+    )
+    cache_key = (
+        str(irreps_in),
+        str(irreps_out),
+        correlation,
+        native_dim,
+        str(native_dtype),
+    )
+    cached = _NATIVE_INSTANCE_TRANSFORM_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    canonical_module = (
+        SymmetricContraction(
+            irreps_in=o3.Irreps(str(irreps_in)),
+            irreps_out=o3.Irreps(str(irreps_out)),
+            correlation=correlation,
+            num_elements=1,
+            use_reduced_cg=False,
+        )
+        .to(dtype=native_dtype)
+        .eval()
+    )
+    batch = max(int(canonical_module.weight.shape[1]), native_dim)
+    rng = np.random.default_rng(0)
+    inputs_np = rng.standard_normal((batch, mul, feature_dim)).astype(solve_dtype)
+    canonical_matrix = torch_target_design_matrix(
+        canonical_module,
+        basis_dim=int(canonical_module.weight.shape[1]),
+        inputs_np=inputs_np,
+    ).astype(solve_dtype, copy=False)
+    transform = _solve_native_to_canonical_transform(
+        native_module=native_module,
+        canonical_matrix=canonical_matrix,
+        solve_dtype=solve_dtype,
+        mul=mul,
+        feature_dim=feature_dim,
+        native_dim=native_dim,
+    )
+    _NATIVE_INSTANCE_TRANSFORM_CACHE[cache_key] = transform
+    return transform
 
 
 @cache
@@ -192,13 +248,27 @@ def native_full_to_canonical_weight(
     irreps_in = cue.Irreps(cue.O3, str(torch_module.irreps_in)).set_mul(1)
     irreps_out = cue.Irreps(cue.O3, str(torch_module.irreps_out)).set_mul(1)
     correlation = int(torch_module.contractions[0].correlation)
-    transform = _cached_full_cg_transform_from_native_torch(
-        type(torch_module),
-        type(torch_module.irreps_in),
-        str(irreps_in),
-        str(irreps_out),
-        correlation,
-    ).astype(native_weight.dtype, copy=False)
+    try:
+        transform = _cached_full_cg_transform_from_native_torch(
+            type(torch_module),
+            type(torch_module.irreps_in),
+            str(irreps_in),
+            str(irreps_out),
+            correlation,
+        ).astype(native_weight.dtype, copy=False)
+    except Exception as cached_exc:
+        try:
+            transform = _full_cg_transform_from_native_instance(torch_module).astype(
+                native_weight.dtype,
+                copy=False,
+            )
+        except Exception as instance_exc:
+            raise RuntimeError(
+                "Failed to compute exact native full-CG -> canonical basis "
+                "mapping for symmetric-contraction weights. "
+                f"(cached_transform_error={type(cached_exc).__name__}: {cached_exc}; "
+                f"instance_transform_error={type(instance_exc).__name__}: {instance_exc})"
+            ) from instance_exc
     return np.einsum("ab,zbu->zau", transform, native_weight, optimize=True)
 
 

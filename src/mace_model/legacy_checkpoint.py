@@ -14,6 +14,7 @@ from typing import Iterator
 import torch
 from torch.serialization import add_safe_globals
 
+from mace_model.torch.adapters.e3nn import Irrep as make_irrep
 from mace_model.torch.adapters.e3nn import Irreps as make_irreps
 from mace_model.torch.adapters.e3nn import (
     get_optimization_defaults,
@@ -50,9 +51,250 @@ MACE_OMOL_URLS = {
 ANICC_DEFAULT_URL = "https://github.com/ACEsuit/mace/raw/main/mace/calculators/foundations_models/ani500k_large_CC.model"
 SUPPORTED_FOUNDATION_SOURCES = ("mp", "off", "anicc", "omol")
 
-_IRREPS_TYPE = type(make_irreps("0e"))
-_MUL_IRREP_TYPE = type(next(iter(make_irreps("1x0e"))))
 _IRREP_TYPE = type(next(iter(make_irreps("1x1o"))).ir)
+
+
+class _LegacyIrrep:
+    """Minimal e3nn ``Irrep`` shim used during legacy checkpoint loading."""
+
+    def __new__(cls, *args):
+        instance = super().__new__(cls)
+        instance.l, instance.p = cls._coerce_payload(args)
+        return instance
+
+    def __init__(self, *args) -> None:
+        if not hasattr(self, "l") or not hasattr(self, "p"):
+            self.l, self.p = self._coerce_payload(args)
+
+    @classmethod
+    def _coerce_payload(cls, args) -> tuple[int, int]:
+        if not args:
+            return 0, 1
+        if len(args) == 1:
+            value = args[0]
+            if isinstance(value, _LegacyIrrep):
+                return int(value.l), int(value.p)
+            if hasattr(value, "l") and hasattr(value, "p"):
+                return int(value.l), int(value.p)
+            if isinstance(value, (tuple, list)) and len(value) == 2:
+                return int(value[0]), int(value[1])
+            if isinstance(value, str):
+                text = value.strip()
+                if text.endswith(("e", "o")) and text[:-1].lstrip("-").isdigit():
+                    return int(text[:-1]), (1 if text[-1] == "e" else -1)
+                parsed = make_irrep(text)
+                if hasattr(parsed, "l") and hasattr(parsed, "p"):
+                    return int(parsed.l), int(parsed.p)
+            parsed = make_irrep(value)
+            if hasattr(parsed, "l") and hasattr(parsed, "p"):
+                return int(parsed.l), int(parsed.p)
+            raise ValueError(f"Cannot coerce irrep value {value!r}.")
+        return int(args[0]), int(args[1])
+
+    def __setstate__(self, state) -> None:
+        if state is None:
+            return
+        if isinstance(state, dict):
+            if "l" in state and "p" in state:
+                self.l = int(state["l"])
+                self.p = int(state["p"])
+            return
+        if isinstance(state, (tuple, list)) and len(state) == 2:
+            self.l = int(state[0])
+            self.p = int(state[1])
+
+    @property
+    def dim(self) -> int:
+        return 2 * int(self.l) + 1
+
+    def __iter__(self):
+        return iter((self.l, self.p))
+
+    def __repr__(self) -> str:
+        return f"{int(self.l)}{'e' if int(self.p) >= 0 else 'o'}"
+
+    __str__ = __repr__
+
+
+def _coerce_legacy_irrep(value):
+    if isinstance(value, _LegacyIrrep):
+        return value
+    if hasattr(value, "l") and hasattr(value, "p"):
+        return _LegacyIrrep((int(value.l), int(value.p)))
+    if isinstance(value, (tuple, list)) and len(value) == 2:
+        return _LegacyIrrep((int(value[0]), int(value[1])))
+    if isinstance(value, str):
+        return _LegacyIrrep(value)
+    if isinstance(value, _IRREP_TYPE):
+        if hasattr(value, "l") and hasattr(value, "p"):
+            return _LegacyIrrep((int(value.l), int(value.p)))
+    parsed = make_irrep(value)
+    if hasattr(parsed, "l") and hasattr(parsed, "p"):
+        return _LegacyIrrep((int(parsed.l), int(parsed.p)))
+    raise ValueError(f"Cannot coerce irrep value {value!r}.")
+
+
+def _legacy_irrep_to_string(ir) -> str:
+    if hasattr(ir, "l") and hasattr(ir, "p"):
+        parity = "e" if int(ir.p) >= 0 else "o"
+        return f"{int(ir.l)}{parity}"
+    return str(ir)
+
+
+class _LegacyMulIr:
+    """Minimal e3nn ``_MulIr`` shim used during legacy checkpoint loading."""
+
+    def __new__(cls, *args):
+        instance = super().__new__(cls)
+        instance.mul, instance.ir = cls._coerce_payload(args)
+        return instance
+
+    def __init__(self, *args) -> None:
+        if not hasattr(self, "mul") or not hasattr(self, "ir"):
+            self.mul, self.ir = self._coerce_payload(args)
+
+    @classmethod
+    def _coerce_payload(cls, args) -> tuple[int, object]:
+        if not args:
+            return 1, _coerce_legacy_irrep((0, 1))
+        if len(args) == 1:
+            value = args[0]
+            if isinstance(value, _LegacyMulIr):
+                return int(value.mul), _coerce_legacy_irrep(value.ir)
+            if hasattr(value, "mul") and hasattr(value, "ir"):
+                return int(value.mul), _coerce_legacy_irrep(value.ir)
+            if isinstance(value, (tuple, list)) and len(value) == 2:
+                return int(value[0]), _coerce_legacy_irrep(value[1])
+            return 1, _coerce_legacy_irrep(value)
+        return int(args[0]), _coerce_legacy_irrep(args[1])
+
+    def __setstate__(self, state) -> None:
+        if state is None:
+            return
+        if isinstance(state, dict):
+            if "mul" in state and "ir" in state:
+                self.mul = int(state["mul"])
+                self.ir = _coerce_legacy_irrep(state["ir"])
+            return
+        if isinstance(state, (tuple, list)) and len(state) == 2:
+            self.mul = int(state[0])
+            self.ir = _coerce_legacy_irrep(state[1])
+
+    def __iter__(self):
+        return iter((self.mul, self.ir))
+
+    def __getitem__(self, index):
+        return (self.mul, self.ir)[index]
+
+    def __repr__(self) -> str:
+        return f"{int(self.mul)}x{_legacy_irrep_to_string(self.ir)}"
+
+    __str__ = __repr__
+
+
+class _LegacyIrreps:
+    """Minimal e3nn-compatible Irreps shim used while unpickling legacy models.
+
+    Old checkpoints encode ``e3nn.o3._irreps.Irreps`` objects via ``NEWOBJ``.
+    Mapping that global directly to cue ``Irreps`` loses constructor args during
+    unpickling, producing instances without ``_mulirreps``. This shim captures
+    and normalizes the serialized arguments so legacy models can be loaded
+    without requiring upstream ``mace``/``e3nn`` packages at runtime.
+    """
+
+    def __new__(cls, *args):
+        instance = super().__new__(cls)
+        instance.irrep_class = _LegacyIrrep
+        instance._mulirreps = cls._coerce_mulirreps(args)
+        return instance
+
+    def __init__(self, *args) -> None:
+        # ``NEWOBJ`` bypasses ``__init__`` during unpickling, but constructing
+        # this class directly should still behave consistently.
+        if not hasattr(self, "_mulirreps"):
+            self.irrep_class = _LegacyIrrep
+            self._mulirreps = self._coerce_mulirreps(args)
+
+    @classmethod
+    def _coerce_mulirreps(cls, args) -> tuple:
+        if not args:
+            return tuple()
+        payload = args[0] if len(args) == 1 else args[1]
+
+        if payload is None:
+            return tuple()
+        if isinstance(payload, _LegacyIrreps):
+            return tuple(payload._mulirreps)
+        if hasattr(payload, "_mulirreps"):
+            return tuple(cls._coerce_mulir(x) for x in payload._mulirreps)
+        if isinstance(payload, str):
+            return tuple(cls._parse_from_string(payload))
+        if isinstance(payload, (list, tuple)):
+            return tuple(cls._coerce_mulir(x) for x in payload)
+        return tuple()
+
+    @classmethod
+    def _coerce_mulir(cls, value):
+        return _LegacyMulIr(value)
+
+    @classmethod
+    def _parse_from_string(cls, value: str):
+        text = value.replace(" ", "")
+        if text == "":
+            return []
+        out = []
+        for chunk in text.split("+"):
+            if not chunk:
+                continue
+            if "x" in chunk:
+                mul_str, ir_str = chunk.split("x", 1)
+                mul = int(mul_str)
+            else:
+                mul = 1
+                ir_str = chunk
+            out.append(_LegacyMulIr((mul, _coerce_legacy_irrep(ir_str))))
+        return out
+
+    def __iter__(self):
+        return iter(self._mulirreps)
+
+    def __len__(self):
+        return len(self._mulirreps)
+
+    def __getitem__(self, index):
+        return self._mulirreps[index]
+
+    def __repr__(self) -> str:
+        return "+".join(
+            f"{int(mul_ir.mul)}x{_legacy_irrep_to_string(mul_ir.ir)}"
+            for mul_ir in self._mulirreps
+        )
+
+    __str__ = __repr__
+
+    def __setstate__(self, state) -> None:
+        if state is None:
+            return
+        if isinstance(state, dict):
+            if "_mulirreps" in state:
+                self._mulirreps = tuple(
+                    self._coerce_mulir(x) for x in state["_mulirreps"]
+                )
+            return
+        if isinstance(state, (list, tuple)):
+            self._mulirreps = tuple(self._coerce_mulir(x) for x in state)
+
+    @property
+    def lmax(self) -> int:
+        return max((int(mul_ir.ir.l) for mul_ir in self._mulirreps), default=0)
+
+    def count(self, rep) -> int:
+        ir = _coerce_legacy_irrep(rep)
+        return sum(
+            int(mul_ir.mul)
+            for mul_ir in self._mulirreps
+            if int(mul_ir.ir.l) == int(ir.l) and int(mul_ir.ir.p) == int(ir.p)
+        )
 
 
 class _LegacyModule(torch.nn.Module):
@@ -195,8 +437,8 @@ def _build_legacy_imports() -> dict[str, types.ModuleType]:
     e3nn.math = e3nn_math
     e3nn.util = e3nn_util
 
-    e3nn_o3.Irrep = _IRREP_TYPE
-    e3nn_o3.Irreps = _IRREPS_TYPE
+    e3nn_o3.Irrep = _LegacyIrrep
+    e3nn_o3.Irreps = _LegacyIrreps
     e3nn_o3.Linear = _legacy_module_type("Linear", "e3nn.o3._linear")
     e3nn_o3.TensorProduct = _legacy_module_type(
         "TensorProduct",
@@ -211,9 +453,9 @@ def _build_legacy_imports() -> dict[str, types.ModuleType]:
         "e3nn.o3._spherical_harmonics",
     )
 
-    e3nn_o3_irreps.Irrep = _IRREP_TYPE
-    e3nn_o3_irreps.Irreps = _IRREPS_TYPE
-    e3nn_o3_irreps._MulIr = _MUL_IRREP_TYPE
+    e3nn_o3_irreps.Irrep = _LegacyIrrep
+    e3nn_o3_irreps.Irreps = _LegacyIrreps
+    e3nn_o3_irreps._MulIr = _LegacyMulIr
 
     e3nn_o3_linear.Linear = e3nn_o3.Linear
     e3nn_o3_linear.Instruction = linear_instruction
