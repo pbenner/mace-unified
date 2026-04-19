@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "mace-model"
 version = "0.1.0"
 description = "MACE model implementations for PyTorch and JAX."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "ase>=3.26",
     "cuequivariance>=0.8",
