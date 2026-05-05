@@ -21,6 +21,7 @@ __all__ = [
     'NonLinearDipoleReadoutBlock',
     'NonLinearReadoutBlock',
     'PolynomialCutoff',
+    'PolarMACE',
     'RadialEmbeddingBlock',
     'RadialMLP',
     'RealAgnosticAttResidualInteractionBlock',

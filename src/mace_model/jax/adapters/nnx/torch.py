@@ -368,6 +368,13 @@ def _import_e3nn_linear(module, variables, scope: Sequence[str]) -> None:
         target['weight'] = jnp.asarray(
             weight.reshape(target['weight'].shape), dtype=target['weight'].dtype
         )
+    elif 'linear' in target and isinstance(target['linear'], dict):
+        linear_target = target['linear']
+        if 'weight' in linear_target:
+            linear_target['weight'] = jnp.asarray(
+                weight.reshape(linear_target['weight'].shape),
+                dtype=linear_target['weight'].dtype,
+            )
     if hasattr(module, 'bias') and module.bias is not None and 'bias' in target:
         target['bias'] = jnp.asarray(
             module.bias.detach().cpu().numpy(),

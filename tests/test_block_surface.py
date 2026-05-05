@@ -62,6 +62,7 @@ TORCH_MODEL_NAMES = [
 ]
 JAX_MODEL_NAMES = [
     'MACE',
+    'PolarMACE',
     'ScaleShiftMACE',
 ]
 

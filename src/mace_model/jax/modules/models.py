@@ -706,4 +706,6 @@ class ScaleShiftMACE(MACE):
         )
 
 
-__all__ = ['MACE', 'ScaleShiftMACE']
+from .polar import PolarMACE
+
+__all__ = ['MACE', 'ScaleShiftMACE', 'PolarMACE']

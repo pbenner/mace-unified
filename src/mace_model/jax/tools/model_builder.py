@@ -33,6 +33,7 @@ from mace_model.jax.modules.blocks import (
     RealAgnosticResidualNonLinearInteractionBlock,
 )
 from mace_model.jax.modules.models import MACE, ScaleShiftMACE
+from mace_model.jax.modules.polar import PolarMACE
 
 _INTERACTION_CLASSES = {
     cls.__name__: cls
@@ -301,9 +302,16 @@ def _template_geometry_to_jax_graph(
         'shifts': jnp.asarray(shifts, dtype=jnp.float32),
         'unit_shifts': jnp.asarray(unit_shifts, dtype=jnp.float32),
         'cell': jnp.asarray(cell, dtype=jnp.float32),
+        'pbc': jnp.zeros((1, 3), dtype=jnp.bool_),
+        'rcell': jnp.asarray(np.linalg.inv(cell), dtype=jnp.float32),
+        'volume': jnp.asarray([abs(float(np.linalg.det(cell)))], dtype=jnp.float32),
         'batch': jnp.zeros((num_nodes,), dtype=jnp.int32),
         'ptr': jnp.asarray([0, num_nodes], dtype=jnp.int32),
         'head': jnp.asarray([0], dtype=jnp.int32),
+        'total_charge': jnp.zeros((1,), dtype=jnp.float32),
+        'total_spin': jnp.ones((1,), dtype=jnp.float32),
+        'fermi_level': jnp.zeros((1,), dtype=jnp.float32),
+        'external_field': jnp.zeros((1, 3), dtype=jnp.float32),
     }
 
 
@@ -440,6 +448,33 @@ def _build_jax_model(
         common_kwargs['apply_cutoff'] = bool(config['apply_cutoff'])
 
     torch_class = config.get('torch_model_class', 'MACE')
+    if torch_class == 'PolarMACE':
+        polar_keys = (
+            'kspace_cutoff_factor',
+            'atomic_multipoles_max_l',
+            'atomic_multipoles_smearing_width',
+            'field_feature_max_l',
+            'field_feature_widths',
+            'num_recursion_steps',
+            'field_si',
+            'include_electrostatic_self_interaction',
+            'add_local_electron_energy',
+            'quadrupole_feature_corrections',
+            'return_electrostatic_potentials',
+            'field_feature_norms',
+            'field_norm_factor',
+            'fixedpoint_update_config',
+            'field_readout_config',
+        )
+        polar_kwargs = {key: config[key] for key in polar_keys if key in config}
+        return PolarMACE(
+            atomic_inter_scale=np.asarray(config.get('atomic_inter_scale', 1.0)),
+            atomic_inter_shift=np.asarray(config.get('atomic_inter_shift', 0.0)),
+            rngs=rngs,
+            **common_kwargs,
+            **polar_kwargs,
+        )
+
     if torch_class == 'ScaleShiftMACE' or 'atomic_inter_scale' in config:
         return ScaleShiftMACE(
             atomic_inter_scale=np.asarray(config.get('atomic_inter_scale', 1.0)),

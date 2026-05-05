@@ -21,6 +21,7 @@ from .blocks import (
 )
 from .embeddings import GenericJointEmbedding
 from .models import MACE, ScaleShiftMACE
+from .polar import PolarMACE
 from .radial import (
     AgnesiTransform,
     BesselBasis,
@@ -51,6 +52,7 @@ __all__ = [
     'NonLinearDipoleReadoutBlock',
     'NonLinearReadoutBlock',
     'PolynomialCutoff',
+    'PolarMACE',
     'RadialEmbeddingBlock',
     'RadialMLP',
     'RealAgnosticAttResidualInteractionBlock',

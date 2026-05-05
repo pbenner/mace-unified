@@ -637,10 +637,98 @@ def _build_local_namespace_aliases() -> dict[str, types.ModuleType]:
     return aliases
 
 
+def _build_graph_longrange_aliases() -> dict[str, types.ModuleType]:
+    """Map legacy graph_longrange checkpoint names to the local implementation."""
+    from mace_model.core.modules.polar import estimate_gto_basis_kspace_cutoff
+    from mace_model.torch.modules import polar_longrange as local_longrange
+
+    modules: dict[str, types.ModuleType] = {}
+
+    def add_module(name: str, *, package: bool = False) -> types.ModuleType:
+        module = types.ModuleType(name)
+        if package:
+            module.__path__ = []  # type: ignore[attr-defined]
+        modules[name] = module
+        return module
+
+    root = add_module('graph_longrange', package=True)
+    energy = add_module('graph_longrange.energy')
+    features = add_module('graph_longrange.features')
+    fourier = add_module('graph_longrange.fourier')
+    gto_utils = add_module('graph_longrange.gto_utils')
+    kspace = add_module('graph_longrange.kspace')
+    realspace = add_module('graph_longrange.realspace')
+    realspace_electrostatics = add_module('graph_longrange.realspace_electrostatics')
+    slabs = add_module('graph_longrange.slabs')
+
+    root.energy = energy
+    root.features = features
+    root.fourier = fourier
+    root.gto_utils = gto_utils
+    root.kspace = kspace
+    root.realspace = realspace
+    root.realspace_electrostatics = realspace_electrostatics
+    root.slabs = slabs
+
+    energy.GTOElectrostaticEnergy = local_longrange.GTOElectrostaticEnergy
+
+    features.GTOElectrostaticFeatures = local_longrange.GTOElectrostaticFeatures
+    features.GTOElectrostaticFeaturesMultiChannel = _legacy_module_type(
+        'GTOElectrostaticFeaturesMultiChannel',
+        'graph_longrange.features',
+    )
+    features.NonPeriodicFeatureCorrections = (
+        local_longrange.NonPeriodicFeatureCorrections
+    )
+
+    fourier.assemble_fourier_series_batch = (
+        local_longrange.assemble_fourier_series_batch
+    )
+    fourier.apply_coulomb_kernel_batch = local_longrange.apply_coulomb_kernel_batch
+    fourier.energy_product_batch = local_longrange.energy_product_batch
+    fourier.project_to_features_batch = local_longrange.project_to_features_batch
+
+    gto_utils.DisplacedGTOExternalFieldBlock = (
+        local_longrange.DisplacedGTOExternalFieldBlock
+    )
+    gto_utils.GTOBasis = local_longrange.GTOBasis
+    gto_utils.GTOInternalFieldtoFeaturesBlock = (
+        local_longrange.GTOInternalFieldtoFeaturesBlock
+    )
+    gto_utils.GTOSelfInteractionBlock = local_longrange.GTOSelfInteractionBlock
+    gto_utils.RadialIntegralDirect = local_longrange.RadialIntegralDirect
+    gto_utils.gto_basis_kspace_cutoff = estimate_gto_basis_kspace_cutoff
+
+    kspace.compute_k_vectors_flat = local_longrange.compute_k_vectors_flat
+
+    realspace.RealSpaceFiniteDiffereneEnergy = (
+        local_longrange.RealSpaceFiniteDiffereneEnergy
+    )
+    realspace.RealSpaceFiniteDifferenceElectrostaticFeatures = (
+        local_longrange.RealSpaceFiniteDifferenceElectrostaticFeatures
+    )
+    realspace_electrostatics.RealSpaceFiniteDiffereneEnergy = (
+        local_longrange.RealSpaceFiniteDiffereneEnergy
+    )
+    realspace_electrostatics.RealSpaceFiniteDifferenceElectrostaticFeatures = (
+        local_longrange.RealSpaceFiniteDifferenceElectrostaticFeatures
+    )
+
+    slabs.CorrectivePotentialBlock = local_longrange.CorrectivePotentialBlock
+    slabs.MonopoleDipoleCorrectionBlock = local_longrange.MonopoleDipoleCorrectionBlock
+    slabs.slab_dipole_correction_energy = local_longrange.slab_dipole_correction_energy
+    slabs.slab_dipole_correction_node_fields = (
+        local_longrange.slab_dipole_correction_node_fields
+    )
+
+    return modules
+
+
 @contextlib.contextmanager
 def legacy_checkpoint_imports() -> Iterator[None]:
     temp_modules = _build_legacy_imports()
     temp_modules.update(_build_local_namespace_aliases())
+    temp_modules.update(_build_graph_longrange_aliases())
     previous = {name: sys.modules.get(name) for name in temp_modules}
     previous_names = set(sys.modules)
     sys.modules.update(temp_modules)

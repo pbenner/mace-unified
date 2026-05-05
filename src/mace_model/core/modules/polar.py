@@ -108,6 +108,15 @@ def expand_field_feature_norms(
     return expanded_norms
 
 
+def estimate_gto_basis_kspace_cutoff(
+    sigmas: Sequence[float],
+    max_l: int,
+) -> float:
+    """Heuristic k-space cutoff used by the GTO electrostatic descriptors."""
+    widths = normalize_field_feature_widths(sigmas)
+    return 0.75 * (1.0 / min(widths)) * (int(max_l) + 1) ** 0.3 * 3.0
+
+
 class PolarMACEModel:
     """Backend-independent PolarMACE constructor and layout helpers."""
 
@@ -292,6 +301,7 @@ __all__ = [
     'PolarMACEConstructorArgs',
     'PolarMACEModel',
     'coerce_mlp_irreps',
+    'estimate_gto_basis_kspace_cutoff',
     'expand_field_feature_norms',
     'layout_from_cueq_config',
     'normalize_field_feature_norms',

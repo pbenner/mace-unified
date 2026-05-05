@@ -129,6 +129,7 @@ def _jax_runtime():
 
     from mace_model.jax.modules.models import MACE as JaxMACE
     from mace_model.jax.modules.models import ScaleShiftMACE as JaxScaleShiftMACE
+    from mace_model.jax.modules.polar import PolarMACE as JaxPolarMACE
     from mace_model.jax.nnx_utils import state_to_pure_dict, state_to_serializable_dict
     from mace_model.jax.tools.model_builder import build_model as build_jax_model
 
@@ -138,7 +139,11 @@ def _jax_runtime():
         'state_to_pure_dict': state_to_pure_dict,
         'state_to_serializable_dict': state_to_serializable_dict,
         'build_model': build_jax_model,
-        'model_classes': {'MACE': JaxMACE, 'ScaleShiftMACE': JaxScaleShiftMACE},
+        'model_classes': {
+            'MACE': JaxMACE,
+            'ScaleShiftMACE': JaxScaleShiftMACE,
+            'PolarMACE': JaxPolarMACE,
+        },
     }
 
 

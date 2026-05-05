@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
+from mace_model.conversion import convert_torch_model, load_serialized_torch_model
 from mace_model.torch.adapters.e3nn import o3
 from mace_model.torch.modules.blocks import RealAgnosticInteractionBlock
 from mace_model.torch.modules.field_blocks import (
@@ -15,7 +17,6 @@ from mace_model.torch.modules.field_blocks import (
     instructions_for_sparse_tp,
 )
 from mace_model.torch.modules.models import PolarMACE
-from mace_model.torch.modules.polar import GRAPH_LONGRANGE_AVAILABLE
 
 pytestmark = [
     pytest.mark.filterwarnings(
@@ -23,6 +24,9 @@ pytestmark = [
     ),
     pytest.mark.filterwarnings(
         'ignore:__array_wrap__ must accept context and return_scalar arguments.*:DeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected.*:UserWarning'
     ),
 ]
 
@@ -78,6 +82,48 @@ def _clone_data(data: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     return {key: value.clone() for key, value in data.items()}
 
 
+def _make_probe_data_for_model(model: torch.nn.Module) -> dict[str, torch.Tensor]:
+    dtype = torch.get_default_dtype()
+    atomic_numbers = [int(value) for value in model.atomic_numbers]
+    z_to_index = {
+        atomic_number: index for index, atomic_number in enumerate(atomic_numbers)
+    }
+    species = [8, 1, 1]
+    node_attrs = torch.zeros((len(species), len(atomic_numbers)), dtype=dtype)
+    for node_index, atomic_number in enumerate(species):
+        node_attrs[node_index, z_to_index[atomic_number]] = 1.0
+
+    senders = []
+    receivers = []
+    for sender in range(len(species)):
+        for receiver in range(len(species)):
+            if sender != receiver:
+                senders.append(sender)
+                receivers.append(receiver)
+    edge_index = torch.tensor([senders, receivers], dtype=torch.long)
+    cell = 20.0 * torch.eye(3, dtype=dtype).unsqueeze(0)
+    return {
+        'positions': torch.tensor(
+            [[0.0, 0.0, 0.0], [0.9572, 0.0, 0.0], [-0.2399872, 0.927297, 0.0]],
+            dtype=dtype,
+        ),
+        'node_attrs': node_attrs,
+        'edge_index': edge_index,
+        'shifts': torch.zeros((edge_index.shape[1], 3), dtype=dtype),
+        'unit_shifts': torch.zeros((edge_index.shape[1], 3), dtype=dtype),
+        'cell': cell,
+        'batch': torch.zeros(len(species), dtype=torch.long),
+        'ptr': torch.tensor([0, len(species)], dtype=torch.long),
+        'pbc': torch.tensor([[False, False, False]]),
+        'rcell': torch.linalg.inv(cell),
+        'volume': torch.linalg.det(cell).abs(),
+        'total_charge': torch.zeros(1, dtype=dtype),
+        'total_spin': torch.ones(1, dtype=dtype),
+        'fermi_level': torch.zeros(1, dtype=dtype),
+        'external_field': torch.zeros((1, 3), dtype=dtype),
+    }
+
+
 class _ConstantPairEnergy(torch.nn.Module):
     def __init__(self, value: float) -> None:
         super().__init__()
@@ -94,18 +140,7 @@ class _ConstantPairEnergy(torch.nn.Module):
         return node_attrs.new_full((node_attrs.shape[0],), self.value)
 
 
-def test_polar_mace_requires_graph_longrange_dependency():
-    if GRAPH_LONGRANGE_AVAILABLE:
-        pytest.skip('graph_longrange is installed in this environment')
-
-    with pytest.raises(ImportError, match='graph_longrange'):
-        PolarMACE()
-
-
-def test_polar_mace_constructs_when_graph_longrange_is_available():
-    if not GRAPH_LONGRANGE_AVAILABLE:
-        pytest.skip('graph_longrange is not installed in this environment')
-
+def test_polar_mace_constructs_with_local_longrange_backend():
     model = _make_polar_model()
 
     assert model.keep_last_layer_irreps is True
@@ -114,10 +149,52 @@ def test_polar_mace_constructs_when_graph_longrange_is_available():
     assert model.potential_irreps.dim == 2 * model.field_irreps.dim
 
 
-def test_polar_mace_forward_uses_pair_repulsion_like_scale_shift_mace():
-    if not GRAPH_LONGRANGE_AVAILABLE:
-        pytest.skip('graph_longrange is not installed in this environment')
+def test_polar_mace_forward_accepts_explicit_pbc_mode():
+    model = _make_polar_model().eval()
+    data = _make_polar_data()
+    data['pbc'] = torch.tensor([[True, True, True]])
 
+    with torch.no_grad():
+        output = model(
+            data,
+            compute_force=False,
+            compute_node_feats=False,
+            longrange_mode='pbc',
+        )
+
+    assert torch.isfinite(output['energy']).all()
+    assert output['energy'].shape == (1,)
+    assert output['node_feats'] is None
+
+
+def test_cached_foundation_polar_checkpoint_converts_and_runs_with_local_backend():
+    checkpoint = Path.home() / '.cache' / 'mace' / 'MACE-POLAR-1-S.model'
+    if not checkpoint.exists():
+        pytest.skip('Cached MACE-POLAR-1-S checkpoint is not available.')
+
+    legacy_model, normalized = load_serialized_torch_model(checkpoint)
+    result = convert_torch_model(legacy_model, backend='torch', config=normalized)
+    model = result.model.eval()
+
+    assert result.model_class == 'PolarMACE'
+    assert isinstance(model, PolarMACE)
+    assert model.atomic_multipoles_max_l == 1
+    assert model.field_feature_max_l == 1
+
+    with torch.no_grad():
+        output = model(
+            _make_probe_data_for_model(model),
+            compute_force=False,
+            compute_node_feats=False,
+        )
+
+    assert torch.isfinite(output['energy']).all()
+    assert output['energy'].shape == (1,)
+    assert output['dipole'].shape == (1, 3)
+    assert output['density_coefficients'].shape == (3, 4)
+
+
+def test_polar_mace_forward_uses_pair_repulsion_like_scale_shift_mace():
     torch.manual_seed(0)
     model = _make_polar_model(pair_repulsion=True)
     data = _make_polar_data()
